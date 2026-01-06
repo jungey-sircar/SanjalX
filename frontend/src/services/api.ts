@@ -1,14 +1,28 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
-const API_URL = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL || '';
+// Get API URL from environment
+const getApiUrl = () => {
+  // For web, use relative URL to leverage proxy
+  if (Platform.OS === 'web') {
+    return '';
+  }
+  // For mobile, use the backend URL
+  const envUrl = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
+  return envUrl || '';
+};
+
+const API_URL = getApiUrl();
+console.log('API_URL configured:', API_URL);
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000,
 });
 
 // Request interceptor to add auth token
