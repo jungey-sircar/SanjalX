@@ -5,8 +5,23 @@ export interface User {
   display_name: string;
   status_message: string;
   profile_photo: string | null;
+  phone_number: string | null;
   created_at: string;
   is_online: boolean;
+}
+
+export interface DeviceContact {
+  id: string;
+  name: string;
+  phoneNumbers: string[];
+  image?: string;
+}
+
+export interface MatchedContact {
+  phone_number: string;
+  is_registered: boolean;
+  user: User | null;
+  deviceContact?: DeviceContact;
 }
 
 export interface Message {
