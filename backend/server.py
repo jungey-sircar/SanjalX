@@ -225,13 +225,21 @@ def normalize_phone_number(phone: str) -> str:
 
 @api_router.post("/auth/register", response_model=TokenResponse)
 async def register(user_data: UserCreate):
-    # Check if username exists
+    # Check if username or email exists
     existing = await db.users.find_one({"$or": [
         {"username": user_data.username.lower()},
         {"email": user_data.email.lower()}
     ]})
     if existing:
         raise HTTPException(status_code=400, detail="Username or email already exists")
+    
+    # Check if phone number exists (if provided)
+    phone_normalized = None
+    if user_data.phone_number:
+        phone_normalized = normalize_phone_number(user_data.phone_number)
+        existing_phone = await db.users.find_one({"phone_number": phone_normalized})
+        if existing_phone:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
     
     user_id = str(uuid.uuid4())
     user = {
@@ -242,6 +250,7 @@ async def register(user_data: UserCreate):
         "display_name": user_data.display_name or user_data.username,
         "status_message": "Hey there! I'm using ConnectX",
         "profile_photo": None,
+        "phone_number": phone_normalized,
         "created_at": datetime.utcnow(),
         "is_online": False,
         "contacts": [],
