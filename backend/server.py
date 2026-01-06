@@ -58,15 +58,17 @@ class UserCreate(BaseModel):
     email: str
     password: str
     display_name: Optional[str] = None
+    phone_number: Optional[str] = None
 
 class UserLogin(BaseModel):
-    username: str  # Can be username or email
+    username: str  # Can be username or email or phone
     password: str
 
 class UserUpdate(BaseModel):
     display_name: Optional[str] = None
     status_message: Optional[str] = None
     profile_photo: Optional[str] = None  # Base64 encoded
+    phone_number: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: str
@@ -75,8 +77,17 @@ class UserResponse(BaseModel):
     display_name: str
     status_message: str
     profile_photo: Optional[str] = None
+    phone_number: Optional[str] = None
     created_at: datetime
     is_online: bool = False
+
+class PhoneMatchRequest(BaseModel):
+    phone_numbers: List[str]
+
+class PhoneMatchResponse(BaseModel):
+    phone_number: str
+    is_registered: bool
+    user: Optional[UserResponse] = None
 
 class TokenResponse(BaseModel):
     access_token: str
