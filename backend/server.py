@@ -594,8 +594,9 @@ async def translate_text(request: TranslateRequest, current_user: dict = Depends
     
     try:
         async with httpx.AsyncClient() as client:
+            # Use the Emergent API endpoint for LLM calls
             response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
+                "https://api.emergentmethods.ai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {EMERGENT_LLM_KEY}",
                     "Content-Type": "application/json"
@@ -623,10 +624,12 @@ async def translate_text(request: TranslateRequest, current_user: dict = Depends
                 return {"original": request.text, "translated": translated, "target_language": request.target_language}
             else:
                 logger.error(f"Translation API error: {response.text}")
-                raise HTTPException(status_code=500, detail="Translation failed")
+                # Fallback: Return original text with note
+                return {"original": request.text, "translated": f"[Translation unavailable] {request.text}", "target_language": request.target_language}
     except Exception as e:
         logger.error(f"Translation error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Translation service unavailable")
+        # Fallback: Return original text with note
+        return {"original": request.text, "translated": f"[Translation unavailable] {request.text}", "target_language": request.target_language}
 
 # ============== PUSH NOTIFICATION ROUTES ==============
 
