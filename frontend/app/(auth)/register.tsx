@@ -25,6 +25,7 @@ export default function RegisterScreen() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -48,7 +49,13 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      await register(username.trim(), email.trim(), password, displayName.trim() || undefined);
+      await register(
+        username.trim(),
+        email.trim(),
+        password,
+        displayName.trim() || undefined,
+        phoneNumber.trim() || undefined
+      );
       router.replace('/(tabs)/chats');
     } catch (error: any) {
       Alert.alert('Registration Failed', error.response?.data?.detail || 'Please try again');
@@ -106,6 +113,18 @@ export default function RegisterScreen() {
             </View>
 
             <View style={[styles.inputContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Ionicons name="call-outline" size={20} color={theme.textSecondary} />
+              <TextInput
+                style={[styles.input, { color: theme.text }]}
+                placeholder="Phone Number (optional)"
+                placeholderTextColor={theme.textSecondary}
+                value={phoneNumber}
+                onChangeText={setPhoneNumber}
+                keyboardType="phone-pad"
+              />
+            </View>
+
+            <View style={[styles.inputContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
               <Ionicons name="person" size={20} color={theme.textSecondary} />
               <TextInput
                 style={[styles.input, { color: theme.text }]}
@@ -146,6 +165,10 @@ export default function RegisterScreen() {
                 secureTextEntry={!showPassword}
               />
             </View>
+
+            <Text style={[styles.phoneHint, { color: theme.textSecondary }]}>
+              Adding your phone number helps friends find you on ConnectX
+            </Text>
 
             <TouchableOpacity
               style={[styles.registerButton, { backgroundColor: theme.primary }]}
@@ -214,6 +237,11 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
     fontSize: 16,
+  },
+  phoneHint: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: -8,
   },
   registerButton: {
     height: 56,
