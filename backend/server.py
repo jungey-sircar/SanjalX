@@ -354,6 +354,55 @@ async def get_contacts(current_user: dict = Depends(get_current_user)):
     contacts = await db.users.find({"id": {"$in": contact_ids}}).to_list(1000)
     return [user_to_response(c) for c in contacts]
 
+@api_router.post("/contacts/match-phones", response_model=List[PhoneMatchResponse])
+async def match_phone_contacts(request: PhoneMatchRequest, current_user: dict = Depends(get_current_user)):
+    """Match phone numbers from device contacts with registered users"""
+    results = []
+    
+    for phone in request.phone_numbers:
+        normalized = normalize_phone_number(phone)
+        
+        # Find user with this phone number (exclude current user)
+        user = await db.users.find_one({
+            "phone_number": normalized,
+            "id": {"$ne": current_user["id"]}
+        })
+        
+        if user:
+            results.append(PhoneMatchResponse(
+                phone_number=phone,
+                is_registered=True,
+                user=user_to_response(user)
+            ))
+        else:
+            results.append(PhoneMatchResponse(
+                phone_number=phone,
+                is_registered=False,
+                user=None
+            ))
+    
+    return results
+
+@api_router.post("/contacts/add-by-phone")
+async def add_contact_by_phone(phone_number: str, current_user: dict = Depends(get_current_user)):
+    """Add a contact by their phone number"""
+    normalized = normalize_phone_number(phone_number)
+    
+    contact_user = await db.users.find_one({"phone_number": normalized})
+    if not contact_user:
+        raise HTTPException(status_code=404, detail="User with this phone number not found")
+    
+    if contact_user["id"] == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot add yourself as contact")
+    
+    contacts = current_user.get("contacts", [])
+    if contact_user["id"] in contacts:
+        raise HTTPException(status_code=400, detail="Already in contacts")
+    
+    contacts.append(contact_user["id"])
+    await db.users.update_one({"id": current_user["id"]}, {"$set": {"contacts": contacts}})
+    return {"message": "Contact added successfully", "user": user_to_response(contact_user)}
+
 # ============== CHAT ROUTES ==============
 
 @api_router.post("/messages", response_model=MessageResponse)
