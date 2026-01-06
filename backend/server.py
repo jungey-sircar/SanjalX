@@ -202,9 +202,24 @@ def user_to_response(user: dict) -> UserResponse:
         display_name=user.get("display_name", user["username"]),
         status_message=user.get("status_message", "Hey there! I'm using ConnectX"),
         profile_photo=user.get("profile_photo"),
+        phone_number=user.get("phone_number"),
         created_at=user["created_at"],
         is_online=user.get("is_online", False)
     )
+
+def normalize_phone_number(phone: str) -> str:
+    """Normalize phone number by removing spaces, dashes, and adding country code if missing"""
+    import re
+    # Remove all non-digit characters except +
+    cleaned = re.sub(r'[^\d+]', '', phone)
+    # If doesn't start with +, assume it needs country code
+    if not cleaned.startswith('+'):
+        # Default to +1 (US) if no country code - can be configured
+        if len(cleaned) == 10:
+            cleaned = '+1' + cleaned
+        elif len(cleaned) > 10:
+            cleaned = '+' + cleaned
+    return cleaned
 
 # ============== AUTH ROUTES ==============
 
