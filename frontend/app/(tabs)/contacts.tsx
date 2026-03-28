@@ -240,28 +240,50 @@ export default function ContactsScreen() {
 
   // Get sections for the list
   const getSections = (): ContactSection[] => {
-    const filtered = matchedContacts.filter(contact => {
-      const name = contact.deviceContact?.name || contact.user?.display_name || '';
+    const sections: ContactSection[] = [];
+
+    // App contacts (contacts added within the app)
+    const filteredAppContacts = appContacts.filter(contact => {
+      const name = contact.display_name || contact.username || '';
       return name.toLowerCase().includes(searchQuery.toLowerCase());
     });
 
-    const registered = filtered.filter(c => c.is_registered);
-    const notRegistered = filtered.filter(c => !c.is_registered);
-
-    const sections: ContactSection[] = [];
-    
-    if (registered.length > 0) {
+    if (filteredAppContacts.length > 0) {
       sections.push({
-        title: 'On ConnectX',
-        data: registered,
+        title: 'ConnectX Contacts',
+        data: filteredAppContacts.map(u => ({
+          phone_number: u.phone_number || '',
+          is_registered: true,
+          user: u,
+        })),
       });
     }
-    
-    if (notRegistered.length > 0) {
-      sections.push({
-        title: 'Invite to ConnectX',
-        data: notRegistered,
+
+    // Device-matched contacts (only on native)
+    if (Platform.OS !== 'web') {
+      const filtered = matchedContacts.filter(contact => {
+        const name = contact.deviceContact?.name || contact.user?.display_name || '';
+        return name.toLowerCase().includes(searchQuery.toLowerCase());
       });
+
+      // Filter out contacts already in appContacts to avoid duplicates
+      const appContactIds = new Set(appContacts.map(c => c.id));
+      const registered = filtered.filter(c => c.is_registered && c.user && !appContactIds.has(c.user.id));
+      const notRegistered = filtered.filter(c => !c.is_registered);
+
+      if (registered.length > 0) {
+        sections.push({
+          title: 'Also on ConnectX',
+          data: registered,
+        });
+      }
+      
+      if (notRegistered.length > 0) {
+        sections.push({
+          title: 'Invite to ConnectX',
+          data: notRegistered,
+        });
+      }
     }
 
     return sections;

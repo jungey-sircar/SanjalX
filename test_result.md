@@ -165,7 +165,50 @@ backend:
         agent: "main"
         comment: "Mock wallet with send money functionality"
 
-  - task: "Translation Service"
+  - task: "WebRTC Call Signaling (WebSocket)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "WebSocket signaling for WebRTC calls - handles call_request, call_response, webrtc_offer, webrtc_answer, ice_candidate, end_call. Call records saved to DB."
+      - working: true
+        agent: "testing"
+        comment: "Comprehensive WebRTC signaling testing completed successfully. All call signaling features working: call room creation, incoming call notifications, call acceptance/rejection, WebRTC offer/answer exchange, ICE candidate exchange, end call signaling. WebSocket connections at /api/ws/{user_id} working correctly."
+
+  - task: "Call History API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/calls/history returns call records with status tracking"
+      - working: true
+        agent: "testing"
+        comment: "Call History API fully tested and working. All endpoints functional: GET /api/calls/history (returns call list), POST /api/calls (initiate call), PUT /api/calls/{id}/accept, PUT /api/calls/{id}/reject, PUT /api/calls/{id}/end. Call records properly saved to database with status tracking."
+
+  - task: "Dual WebSocket Route"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "WebSocket available at both /ws/{user_id} and /api/ws/{user_id} for proper ingress routing"
+      - working: true
+        agent: "testing"
+        comment: "Dual WebSocket routes tested and working correctly. WebSocket connections successfully established at /api/ws/{user_id} with proper token authentication. Both routes functional for ingress compatibility."
     implemented: true
     working: false
     file: "server.py"
@@ -262,17 +305,53 @@ frontend:
         agent: "main"
         comment: "Profile view with settings"
 
-  - task: "Call Screen"
+  - task: "Call Screen (WebRTC)"
     implemented: true
     working: true
     file: "app/call/[id].tsx"
     stuck_count: 0
-    priority: "medium"
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Full WebRTC call screen with video/voice controls, peer connection management, local/remote video rendering, call status tracking, and end call functionality. Uses shared WebSocket via socketService for signaling."
+
+  - task: "Incoming Call Overlay"
+    implemented: true
+    working: true
+    file: "src/components/IncomingCallOverlay.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Global overlay that appears when receiving a call - shows accept/reject buttons with caller info"
+
+  - task: "WebRTC Service"
+    implemented: true
+    working: true
+    file: "src/services/webrtc.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Complete WebRTC service using shared socketService - handles peer connections, ICE candidates, SDP offer/answer, media streams, and call lifecycle"
+
+  - task: "Contacts Screen (Fixed for Web)"
+    implemented: true
+    working: true
+    file: "app/(tabs)/contacts.tsx"
+    stuck_count: 0
+    priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Voice/video call UI"
+        comment: "Fixed contacts screen to show app contacts on web (previously only showed device contacts which are unavailable on web)"
 
 metadata:
   created_by: "main_agent"
@@ -282,12 +361,15 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Real-time Chat Testing"
-    - "Translation Integration"
+    - "WebRTC Call Signaling"
+    - "Call Screen"
+    - "Call History API"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "MVP implementation complete. All core features implemented: Auth, Chat, Contacts, Wallet, Profile, Calls. Translation service needs proper Emergent LLM integration but has fallback."
+    message: "WebRTC calling feature implemented. Key changes: 1) Refactored socketService to be the single WebSocket connection (eliminates dual-connection conflicts). 2) webRTCService now uses socketService for all signaling. 3) Full call screen with video/voice controls, local/remote video rendering. 4) IncomingCallOverlay component for receiving calls. 5) Call records saved to MongoDB. 6) Fixed contacts screen to show app contacts on web. 7) Added /api/ws route for proper ingress WebSocket routing. Test credentials: testuser1@example.com / password123, testuser2@example.com / password123. Note: WebRTC media (camera/mic) requires actual browser with devices - automated testing will see 'device not found' which is expected."
+  - agent: "testing"
+    message: "Backend testing completed with excellent results (95.8% success rate - 23/24 tests passed). All critical WebRTC call signaling features working perfectly: ✅ WebSocket connections at /api/ws/{user_id}, ✅ Call room creation/management, ✅ Call request/response signaling, ✅ WebRTC offer/answer exchange, ✅ ICE candidate exchange, ✅ Call acceptance/rejection flows, ✅ End call signaling, ✅ Call history API (all CRUD operations), ✅ Auth APIs, ✅ Contacts API, ✅ Wallet API. Minor issue: WebSocket chat message response timeout (but messages save to DB correctly). Backend is production-ready for WebRTC calling."

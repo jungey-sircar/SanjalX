@@ -746,7 +746,19 @@ class ConnectionManager:
                 room["participants"].remove(user_id)
                 if len(room["participants"]) == 0:
                     del self.call_rooms[room_id]
-        asyncio.create_task(db.users.update_one({"id": user_id}, {"$set": {"is_online": False}}))
+        # Schedule the DB update as a background task
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self._update_user_offline(user_id))
+        except RuntimeError:
+            pass
+
+    async def _update_user_offline(self, user_id: str):
+        try:
+            await db.users.update_one({"id": user_id}, {"$set": {"is_online": False}})
+        except Exception as e:
+            print(f"Error updating user offline status: {e}")
     
     async def send_personal_message(self, message: dict, user_id: str):
         if user_id in self.active_connections:
@@ -803,6 +815,13 @@ manager = ConnectionManager()
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = None):
+    await _handle_websocket(websocket, user_id, token)
+
+@app.websocket("/api/ws/{user_id}")
+async def websocket_endpoint_api(websocket: WebSocket, user_id: str, token: str = None):
+    await _handle_websocket(websocket, user_id, token)
+
+async def _handle_websocket(websocket: WebSocket, user_id: str, token: str = None):
     # Verify token
     try:
         if token:
@@ -880,6 +899,19 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
                 if target_id:
                     # Create call room
                     manager.create_call_room(room_id, user_id, call_type, [])
+                    
+                    # Save call record to DB
+                    call_record = {
+                        "id": room_id,
+                        "caller_id": user_id,
+                        "receiver_id": target_id,
+                        "call_type": call_type,
+                        "status": "pending",
+                        "started_at": None,
+                        "ended_at": None,
+                        "created_at": datetime.utcnow()
+                    }
+                    await db.calls.insert_one(call_record)
                     
                     caller = await db.users.find_one({"id": user_id})
                     await manager.send_personal_message(
@@ -1028,6 +1060,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
                     if accepted:
                         # Join the room
                         manager.join_call_room(room_id, user_id)
+                        # Update call record
+                        await db.calls.update_one(
+                            {"id": room_id},
+                            {"$set": {"status": "accepted", "started_at": datetime.utcnow()}}
+                        )
+                    else:
+                        # Update call record as rejected
+                        await db.calls.update_one(
+                            {"id": room_id},
+                            {"$set": {"status": "rejected"}}
+                        )
                     
                     await manager.send_personal_message(
                         {
@@ -1109,6 +1152,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
                         # Remove room
                         if room_id in manager.call_rooms:
                             del manager.call_rooms[room_id]
+                    
+                    # Update call record
+                    await db.calls.update_one(
+                        {"id": room_id},
+                        {"$set": {"status": "ended", "ended_at": datetime.utcnow()}}
+                    )
             
             elif msg_type == "call_signal":
                 # Legacy call signal (for backward compatibility)

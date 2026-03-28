@@ -1,0 +1,186 @@
+<analysis>
+<original_problem_statement>
+Build a MOBILE APP called “ConnectX” that works like WeChat. This is strictly a MOBILE APP, not a website.
+
+The application should include:
+- MOBILE AUTHENTICATION &amp; USER PROFILE: JWT-based custom auth (email/password), profile screen.
+- MOBILE REAL-TIME CHAT SYSTEM: 1-to-1 and group chat using WebSockets.
+- MOBILE VOICE &amp; VIDEO CALLING: 1-to-1 and group calling using WebRTC.
+- MOBILE MESSAGE TRANSLATION: In-app translation using an LLM.
+- MOBILE WALLET &amp; PAYMENTS: A mocked wallet system for sending/receiving money.
+- MOBILE PUSH NOTIFICATIONS: For new messages, calls, etc.
+- MOBILE CONTACTS: Ability to access phone contacts, match them with registered users, and start chats.
+</original_problem_statement>
+
+**User's preferred language**: English
+
+**what currently exists?**
+A partially functional Expo mobile app named ConnectX. The app has a FastAPI backend and a MongoDB database. Key implemented features include:
+- A complete project structure for a modern Expo app using file-based routing ().
+- JWT-based user registration and login.
+- A bottom tab navigator for Chats, Calls, Contacts, Wallet, and Profile.
+- A real-time 1-to-1 chat system using WebSockets.
+- An enhanced, but mocked, Wallet UI for simulated transactions.
+- A contact matching system that can identify users on the platform from the device's contacts (backend logic complete, frontend UI ready for device integration).
+- Enhanced Profile and Settings screens.
+- The backend has been prepared with signaling endpoints to support the upcoming WebRTC implementation.
+
+**Last working item**:
+-   **Last item agent was working**: Implementing a full-featured, WebRTC-based voice and video calling system for both 1-to-1 and group calls. The agent updated the backend WebSocket server () to manage call rooms and handle WebRTC signaling messages (, , ). It also created a placeholder service file () for the frontend logic.
+-   **Status**: IN PROGRESS
+-   **Agent Testing Done**: N
+-   **Which testing method agent to use?**: manual testing by curl. The frontend is not ready for testing. The backend signaling can be tested by sending mock WebSocket messages. Once the frontend is developed, manual testing with screenshots across two separate user sessions will be required to validate the peer-to-peer connection.
+-   **User Testing Done**: N
+
+**All Pending/In progress Issue list**:
+  - **Issue 1**: WebRTC Implementation is incomplete (P0)
+
+  **Issues Detail**:
+  - **Issue 1**:
+     -   **Description**: The user requested a fully functional WebRTC calling feature. The backend signaling logic has been added, but the client-side implementation is missing. The app currently shows a mocked call screen without any real audio/video streaming capabilities. A critical dependency, , has not been installed.
+     -   **Attempted fixes**: The agent updated  with WebSocket handlers for WebRTC signaling and created an empty  file. This is just the groundwork.
+     -   **Next debug checklist**:
+         1.  Install the  package: yarn add v1.22.22
+[1/4] Resolving packages...
+[2/4] Fetching packages...
+[3/4] Linking dependencies...
+info Visit https://yarnpkg.com/en/docs/cli/add for documentation about this command..
+         2.  Implement the logic in  to manage , handle media streams (local and remote), and communicate with the WebSocket server for signaling.
+         3.  Overwrite the  screen to use the new  service, render video streams in a grid, and handle call controls.
+         4.  Ensure device permissions for camera and microphone are requested using  or a similar library.
+     -   **Why fix this issue and what will be achieved with the fix?**: This will deliver one of the main features of the application, transforming it from a chat app with mocked calls into a full communication platform.
+     -   **Status**: IN PROGRESS
+     -   **Is recurring issue?**: N
+     -   **Should Test frontend/backend/both after fix?**: Both
+     -   **Blocked on other issue**: None
+
+**In progress Task List**:
+  - **Task 1**: Complete WebRTC Call Feature (P0)
+
+  **Task Detail**:
+  - **Task 1**:
+     -   **Description**: Finish the implementation of real-time 1-to-1 and group video/voice calls.
+     -   **Where to resume**: Start by installing the  dependency. Then, flesh out the client-side logic in  and build the UI in  to render video streams and handle user controls.
+     -   **What will be achieved with this?**: Users will be able to make and receive real audio/video calls within the app.
+     -   **Status**: IN PROGRESS
+     -   **Should Test frontend/backend/both after fix?**: Both
+     -   **Blocked on something**: The  package is not installed.
+
+**Upcoming and Future Tasks**
+- **Upcoming Tasks**:
+    - **P1: Group Chat Functionality**: Implement the backend and frontend logic to create and manage group chats. The UI and data models have placeholders for this.
+    - **P1: Push Notifications**: Integrate  to send alerts for new messages and incoming calls.
+    - **P2: Voice Message Recording**: Use the  library to add functionality for recording and sending voice notes in chat.
+- **Future Tasks**:
+    - **P2: Message Translation (Full Implementation)**: The current implementation has a fallback. The feature needs to be properly integrated with the Emergent LLM Key via the  and a Translate button needs to be added to chat messages.
+    - **P3: Profile Photo Upload**: Allow users to upload a profile photo from their device's camera or gallery using .
+    - **P3: Dark Mode**: Implement a theme toggle for light and dark modes.
+
+**Completed work in this session**
+- **User Authentication (JWT)**: Complete login and registration flow.
+- **Mobile App Scaffolding**: Full project structure using Expo Router with tab navigation.
+- **Real-time Chat (1-to-1)**: Functional chat via WebSockets.
+- **Contact Matching**: Backend API to match phone contacts with registered users.
+- **Enhanced UI**:
+  - : Redesigned with a MOCK badge, action buttons, and transaction list.
+  - : Updated with links to new Edit Profile and Settings screens.
+  - : Improved header with search and a FAB for new conversations.
+- **Critical Bug Fix**: Resolved a  crash related to  and  dependency conflicts.
+
+**Earlier issues found/mentioned but not fixed**
+   - **Issue 1**: Message Translation is a fallback.
+     -   **Debug checklist**:
+         1. Call  to get the correct SDK/library for the Emergent LLM Key.
+         2. Update the  endpoint in  to use the new library.
+         3. Add a Translate button on chat bubbles in  to trigger the translation.
+     -   **Why to solve this issue and what will be achieved with this?**: Fulfills a core product requirement for in-app message translation.
+     -   **Should Test frontend/backend/both after fix**: Backend
+     -   **Is recurring issue?**: N
+
+**Known issue recurrence from previous fork**
+- None.
+
+**Code Architecture**
+
+
+**Key Technical Concepts**
+-   **Frontend**: React Native, Expo, Expo Router, TypeScript, Zustand, Axios
+-   **Backend**: Python, FastAPI, WebSockets (), Motor (for async MongoDB)
+-   **Database**: MongoDB
+-   **Real-time**: WebSockets for chat/signaling; WebRTC for media streams (in progress).
+
+**key DB schema**
+  - **users**: {, , , , , }
+  - **messages**: {, , , , }
+  - **wallets**: {, }
+  - **transactions**: {, , , }
+
+**changes in tech stack**
+- None.
+
+**All files of reference**
+-   **Key Backend File**:  (Contains all logic; consider splitting).
+-   **Key Frontend Files**:
+    -    (Root layout and providers).
+    -    (Next file to implement).
+    -    (Next UI screen to build).
+    -    (Handles user session).
+    -    (Example of an enhanced UI component).
+
+**Areas that need refactoring**:
+- The  file has grown to over 800 lines. It should be modularized by splitting the API routes (auth, chat, wallet) and WebSocket logic into separate files/routers for better maintainability.
+
+**key api endpoints**
+-   
+-    (Login)
+-   
+-   
+-    (Handles all real-time chat and call signaling)
+
+**Critical Info for New Agent**
+-   Your primary task is to implement the **WebRTC video/voice call feature**. The user has provided detailed requirements for this.
+-   You **MUST** start by installing the  package, as it is a critical missing dependency for the current task.
+-   The project recently recovered from a significant navigation-related crash ( error). Be very careful when modifying navigation packages (, ). The current dependency set is stable.
+-   The app is **mobile-only**. Do not introduce any web-specific libraries or components.
+
+**documents created in this job**
+- /app/memory/PRD.md
+- /app/test_result.md
+
+**Last 10 User Messages and any pending HUMAN messages**
+1.  **User**: Requested to upgrade the mocked call system to fully functional WebRTC for 1:1 and group calls. (IN PROGRESS)
+2.  **User**: Asked if video calls and chat are currently working between two devices. (Answered: Chat works, calls are mocked).
+3.  **User**: Requested to continue making the mobile app complete. (Actioned: Added Profile/Settings screens).
+4.  **User**: Provided requirements for the wallet feature. (Completed).
+5.  **User**: Provided detailed requirements for the contact matching feature. (Completed).
+6.  **User**: Made initial technology choices (JWT, mock payments, etc.). (Completed).
+7.  **User**:  (Actioned).
+8.  **Agent**: Asked for user input on auth, signaling, and payments. (Answered).
+9.  **User**: Provided the problem statement.
+10. **Agent**: Acknowledged the task.
+
+**Project Health Check:**
+-   **Broken**: The core video/voice call feature is non-existent beyond a UI mock.
+-   **Mocked**: The Wallet feature is explicitly mocked. The translation feature has a non-functional fallback.
+
+**3rd Party Integrations**
+-   OpenAI/Google/Claude (via Emergent LLM Key) — uses Emergent LLM Key. Partially integrated for translation, but needs a proper SDK implementation.
+
+**Testing status**
+-   **Testing agent used after significant changes**: NO
+-   **Troubleshoot agent used after agent stuck in loop**: NO
+-   **Test files created**: []
+-   **Known regressions**: None currently. A major navigation bug was recently fixed.
+
+**Credentials to test flow:**
+-   New users can be created on the registration screen. Use credentials like  / .
+
+**What agent forgot to execute**
+-   The agent failed to install the  package, which is essential for the current task of implementing WebRTC calls.
+-   The agent did not use the  to properly set up the LLM-based translation, instead opting for a direct API call that is not robust.
+
+</analysis>
+<SYS_PROMPT_SEPARATOR>
+<workspace_dir>
+/app
+</workspace_dir>
