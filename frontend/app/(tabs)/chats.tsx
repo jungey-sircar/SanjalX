@@ -188,6 +188,13 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
   },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  headerButton: {
+    padding: 4,
+  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
