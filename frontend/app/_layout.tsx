@@ -21,6 +21,9 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="chat/[id]" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="edit-profile" options={{ headerShown: false, presentation: 'modal' }} />
+        <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
+        <Stack.Screen name="new-group" options={{ headerShown: false, presentation: 'modal' }} />
       </Stack>
     </>
   );
