@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/hooks/useTheme';
 import { Avatar } from '../../src/components/Avatar';
+import { GiftPacketBubble } from '../../src/components/GiftPacketBubble';
+import { SendGiftModalContent } from '../../src/components/SendGiftModal';
 import { useAuthStore } from '../../src/store/authStore';
 import { socketService } from '../../src/services/socket';
 import api from '../../src/services/api';
@@ -33,6 +36,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
   const [isTyping, setIsTyping] = useState(false);
+  const [showGiftModal, setShowGiftModal] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -140,6 +144,27 @@ export default function ChatScreen() {
     }
   };
 
+  const handleSendGift = async (amount: number, message: string, giftType: string, slots: number) => {
+    try {
+      await api.post('/gifts/send', {
+        chat_id: id,
+        total_amount: amount,
+        gift_type: giftType,
+        total_slots: slots,
+        message: message || 'Sent you a gift!',
+        is_group: false,
+      });
+      setShowGiftModal(false);
+      // Gift message will appear via WebSocket
+    } catch (error: any) {
+      throw error; // Let modal handle it
+    }
+  };
+
+  const handleOpenGift = (packetId: string) => {
+    router.push(`/gift/${packetId}`);
+  };
+
   const handleInputChange = (text: string) => {
     setInputText(text);
     if (text.length > 0) {
@@ -182,6 +207,22 @@ export default function ChatScreen() {
                   </Text>
                 </View>
               </TouchableOpacity>
+            ) : item.message_type === 'gift_packet' ? (
+              (() => {
+                let packetData;
+                try {
+                  packetData = JSON.parse(item.content);
+                } catch {
+                  packetData = { packet_id: '', message: 'Gift', gift_type: 'direct', total_amount: 0, total_slots: 1, sender_name: '' };
+                }
+                return (
+                  <GiftPacketBubble
+                    packetData={packetData}
+                    isSent={isOwnMessage}
+                    onOpen={handleOpenGift}
+                  />
+                );
+              })()
             ) : (
               <>
                 <Text style={[styles.messageText, { color: theme.text }]}>
@@ -297,6 +338,9 @@ export default function ChatScreen() {
         />
 
         <View style={[styles.inputContainer, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+          <TouchableOpacity style={styles.attachButton} onPress={() => setShowGiftModal(true)}>
+            <Text style={{ fontSize: 22 }}>🧧</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.attachButton} onPress={handleSendImage}>
             <Ionicons name="image" size={24} color={theme.primary} />
           </TouchableOpacity>
@@ -320,6 +364,22 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Gift Modal */}
+      <Modal
+        visible={showGiftModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowGiftModal(false)}
+      >
+        <SendGiftModalContent
+          receiverName={otherUser?.display_name || 'User'}
+          receiverId={id!}
+          isGroup={false}
+          onSend={handleSendGift}
+          onClose={() => setShowGiftModal(false)}
+        />
+      </Modal>
     </SafeAreaView>
   );
 }

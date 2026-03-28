@@ -165,6 +165,47 @@ class TranslateRequest(BaseModel):
     text: str
     target_language: str  # en, ne, hi
 
+# ============== GIFT PACKET MODELS ==============
+
+class GiftPacketCreate(BaseModel):
+    chat_id: str  # receiver_id for 1:1, group_id for group
+    total_amount: float
+    gift_type: str = "direct"  # direct, equal, first_claim
+    total_slots: int = 1  # For equal split mode
+    message: Optional[str] = None
+    is_group: bool = False
+
+class GiftPacketResponse(BaseModel):
+    id: str
+    sender_id: str
+    sender_name: Optional[str] = None
+    chat_id: str
+    total_amount: float
+    remaining_amount: float
+    gift_type: str
+    total_slots: int
+    claimed_slots: int
+    status: str  # active, completed, expired
+    message: Optional[str] = None
+    is_group: bool = False
+    created_at: datetime
+    expires_at: datetime
+
+class GiftClaimResponse(BaseModel):
+    id: str
+    packet_id: str
+    user_id: str
+    user_name: Optional[str] = None
+    amount: float
+    created_at: datetime
+
+class GiftClaimResult(BaseModel):
+    success: bool
+    amount: float = 0.0
+    message: str = ""
+    claim: Optional[GiftClaimResponse] = None
+    packet: Optional[GiftPacketResponse] = None
+
 # ============== HELPER FUNCTIONS ==============
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -663,6 +704,413 @@ async def get_transactions(current_user: dict = Depends(get_current_user)):
         "$or": [{"sender_id": current_user["id"]}, {"receiver_id": current_user["id"]}]
     }).sort("created_at", -1).to_list(100)
     return [TransactionResponse(**t) for t in transactions]
+
+# ============== GIFT PACKET ROUTES ==============
+
+async def _ensure_wallet(user_id: str) -> dict:
+    """Ensure user has a wallet, create if not exists."""
+    wallet = await db.wallets.find_one({"user_id": user_id})
+    if not wallet:
+        wallet = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "balance": 1000.0,
+            "created_at": datetime.utcnow()
+        }
+        await db.wallets.insert_one(wallet)
+    return wallet
+
+async def _check_and_expire_packet(packet: dict) -> dict:
+    """Check if a packet has expired and process refund if needed."""
+    if packet["status"] == "active" and datetime.utcnow() > packet["expires_at"]:
+        remaining = packet["remaining_amount"]
+        # Refund remaining to sender
+        if remaining > 0:
+            await db.wallets.update_one(
+                {"user_id": packet["sender_id"]},
+                {"$inc": {"balance": remaining}}
+            )
+            # Record refund transaction
+            refund_tx = {
+                "id": str(uuid.uuid4()),
+                "sender_id": "system",
+                "receiver_id": packet["sender_id"],
+                "amount": remaining,
+                "note": f"Refund for expired gift packet",
+                "status": "completed",
+                "related_packet_id": packet["id"],
+                "tx_type": "refund",
+                "created_at": datetime.utcnow()
+            }
+            await db.transactions.insert_one(refund_tx)
+        
+        # Mark as expired
+        await db.gift_packets.update_one(
+            {"id": packet["id"]},
+            {"$set": {"status": "expired", "remaining_amount": 0}}
+        )
+        packet["status"] = "expired"
+        packet["remaining_amount"] = 0
+        
+        # Send WebSocket notification
+        try:
+            await manager.send_personal_message(
+                {"type": "gift_expired", "packet_id": packet["id"]},
+                packet["sender_id"]
+            )
+        except:
+            pass
+    return packet
+
+@api_router.post("/gifts/send")
+async def send_gift_packet(gift: GiftPacketCreate, current_user: dict = Depends(get_current_user)):
+    """Create and send a gift packet. Deducts from sender's wallet atomically."""
+    
+    # Validation
+    if gift.total_amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    if gift.total_amount < 0.01:
+        raise HTTPException(status_code=400, detail="Minimum gift amount is $0.01")
+    if gift.gift_type not in ("direct", "equal", "first_claim"):
+        raise HTTPException(status_code=400, detail="Invalid gift type")
+    if gift.gift_type == "equal" and gift.total_slots < 1:
+        raise HTTPException(status_code=400, detail="Must have at least 1 slot")
+    if gift.gift_type == "direct":
+        gift.total_slots = 1
+    if gift.gift_type == "first_claim":
+        gift.total_slots = 1  # Only one person can claim
+    
+    sender_id = current_user["id"]
+    sender_name = current_user.get("display_name", current_user.get("username", "Unknown"))
+    
+    # Check balance atomically: find wallet and decrement only if sufficient
+    result = await db.wallets.find_one_and_update(
+        {"user_id": sender_id, "balance": {"$gte": gift.total_amount}},
+        {"$inc": {"balance": -gift.total_amount}},
+        return_document=True
+    )
+    
+    if not result:
+        # Check if wallet exists
+        wallet = await _ensure_wallet(sender_id)
+        if wallet["balance"] < gift.total_amount:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
+        # Retry after ensuring wallet
+        result = await db.wallets.find_one_and_update(
+            {"user_id": sender_id, "balance": {"$gte": gift.total_amount}},
+            {"$inc": {"balance": -gift.total_amount}},
+            return_document=True
+        )
+        if not result:
+            raise HTTPException(status_code=400, detail="Insufficient balance")
+    
+    # Create the gift packet
+    packet_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    packet = {
+        "id": packet_id,
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "chat_id": gift.chat_id,
+        "total_amount": gift.total_amount,
+        "remaining_amount": gift.total_amount,
+        "gift_type": gift.gift_type,
+        "total_slots": gift.total_slots,
+        "claimed_slots": 0,
+        "status": "active",
+        "message": gift.message or "Sent you a gift!",
+        "is_group": gift.is_group,
+        "created_at": now,
+        "expires_at": now + timedelta(hours=24)
+    }
+    await db.gift_packets.insert_one(packet)
+    
+    # Record debit transaction
+    debit_tx = {
+        "id": str(uuid.uuid4()),
+        "sender_id": sender_id,
+        "receiver_id": gift.chat_id,
+        "amount": gift.total_amount,
+        "note": f"Gift packet: {gift.message or 'Sent you a gift!'}",
+        "status": "completed",
+        "related_packet_id": packet_id,
+        "tx_type": "gift_sent",
+        "created_at": now
+    }
+    await db.transactions.insert_one(debit_tx)
+    
+    # Create a special chat message for the gift packet
+    msg_id = str(uuid.uuid4())
+    gift_msg = {
+        "id": msg_id,
+        "sender_id": sender_id,
+        "receiver_id": gift.chat_id if not gift.is_group else None,
+        "group_id": gift.chat_id if gift.is_group else None,
+        "content": json.dumps({
+            "packet_id": packet_id,
+            "message": packet["message"],
+            "gift_type": gift.gift_type,
+            "total_amount": gift.total_amount,
+            "total_slots": gift.total_slots,
+            "sender_name": sender_name
+        }),
+        "message_type": "gift_packet",
+        "created_at": now,
+        "read": False
+    }
+    await db.messages.insert_one(gift_msg)
+    
+    # Send via WebSocket
+    msg_ws = dict(gift_msg)
+    msg_ws["created_at"] = now.isoformat()
+    
+    if gift.is_group:
+        group = await db.groups.find_one({"id": gift.chat_id})
+        if group:
+            await manager.broadcast_to_users(
+                {"type": "new_message", "data": msg_ws},
+                [m for m in group["member_ids"] if m != sender_id]
+            )
+    else:
+        await manager.send_personal_message(
+            {"type": "new_message", "data": msg_ws},
+            gift.chat_id
+        )
+    
+    # Confirm to sender
+    await manager.send_personal_message(
+        {"type": "message_sent", "data": msg_ws},
+        sender_id
+    )
+    
+    # Also send gift_sent event
+    await manager.send_personal_message(
+        {"type": "gift_sent", "packet_id": packet_id, "amount": gift.total_amount},
+        sender_id
+    )
+    
+    return GiftPacketResponse(**{
+        **packet,
+        "created_at": now,
+        "expires_at": packet["expires_at"]
+    })
+
+@api_router.post("/gifts/{packet_id}/claim")
+async def claim_gift_packet(packet_id: str, current_user: dict = Depends(get_current_user)):
+    """Claim a gift packet. Uses atomic operations for concurrency safety."""
+    
+    user_id = current_user["id"]
+    user_name = current_user.get("display_name", current_user.get("username", "Unknown"))
+    
+    # Get the packet
+    packet = await db.gift_packets.find_one({"id": packet_id})
+    if not packet:
+        raise HTTPException(status_code=404, detail="Gift packet not found")
+    
+    # Check expiry
+    packet = await _check_and_expire_packet(packet)
+    
+    if packet["status"] != "active":
+        return GiftClaimResult(
+            success=False,
+            message=f"This gift packet is {packet['status']}"
+        )
+    
+    # Sender cannot claim their own gift
+    if packet["sender_id"] == user_id:
+        return GiftClaimResult(success=False, message="Cannot claim your own gift")
+    
+    # Check if already claimed by this user
+    existing_claim = await db.gift_claims.find_one({
+        "packet_id": packet_id, "user_id": user_id
+    })
+    if existing_claim:
+        return GiftClaimResult(
+            success=False,
+            message="You already claimed this gift",
+            claim=GiftClaimResponse(**existing_claim)
+        )
+    
+    # Calculate claim amount based on type
+    claim_amount = 0.0
+    
+    if packet["gift_type"] == "direct":
+        claim_amount = packet["remaining_amount"]
+    
+    elif packet["gift_type"] == "equal":
+        # Equal split: total / total_slots
+        claim_amount = round(packet["total_amount"] / packet["total_slots"], 2)
+        # Last person gets remainder to handle rounding
+        if packet["claimed_slots"] == packet["total_slots"] - 1:
+            claim_amount = round(packet["remaining_amount"], 2)
+    
+    elif packet["gift_type"] == "first_claim":
+        claim_amount = packet["remaining_amount"]
+    
+    if claim_amount <= 0:
+        return GiftClaimResult(success=False, message="No amount available to claim")
+    
+    # ATOMIC: Update packet - decrement remaining, increment claimed
+    # Only if still active and has remaining amount
+    update_filter = {
+        "id": packet_id,
+        "status": "active",
+        "remaining_amount": {"$gte": claim_amount}
+    }
+    
+    # For first_claim, also ensure claimed_slots is still 0
+    if packet["gift_type"] == "first_claim":
+        update_filter["claimed_slots"] = 0
+    
+    # For equal split, ensure not exceeded total_slots
+    if packet["gift_type"] == "equal":
+        update_filter["claimed_slots"] = {"$lt": packet["total_slots"]}
+    
+    new_remaining = round(packet["remaining_amount"] - claim_amount, 2)
+    new_claimed = packet["claimed_slots"] + 1
+    
+    # Check if packet should be completed
+    is_completed = False
+    if packet["gift_type"] == "direct":
+        is_completed = True
+    elif packet["gift_type"] == "first_claim":
+        is_completed = True
+    elif packet["gift_type"] == "equal" and new_claimed >= packet["total_slots"]:
+        is_completed = True
+    
+    update_set = {
+        "remaining_amount": max(new_remaining, 0),
+        "claimed_slots": new_claimed,
+    }
+    if is_completed:
+        update_set["status"] = "completed"
+    
+    result = await db.gift_packets.find_one_and_update(
+        update_filter,
+        {"$set": update_set},
+        return_document=True
+    )
+    
+    if not result:
+        # Race condition or already claimed
+        return GiftClaimResult(
+            success=False,
+            message="This gift has already been claimed or is no longer available"
+        )
+    
+    # Create claim record
+    claim_id = str(uuid.uuid4())
+    now = datetime.utcnow()
+    claim = {
+        "id": claim_id,
+        "packet_id": packet_id,
+        "user_id": user_id,
+        "user_name": user_name,
+        "amount": claim_amount,
+        "created_at": now
+    }
+    await db.gift_claims.insert_one(claim)
+    
+    # Credit receiver wallet
+    receiver_wallet = await _ensure_wallet(user_id)
+    await db.wallets.update_one(
+        {"user_id": user_id},
+        {"$inc": {"balance": claim_amount}}
+    )
+    
+    # Record credit transaction
+    credit_tx = {
+        "id": str(uuid.uuid4()),
+        "sender_id": packet["sender_id"],
+        "receiver_id": user_id,
+        "amount": claim_amount,
+        "note": f"Gift received from {packet.get('sender_name', 'Unknown')}",
+        "status": "completed",
+        "related_packet_id": packet_id,
+        "tx_type": "gift_received",
+        "created_at": now
+    }
+    await db.transactions.insert_one(credit_tx)
+    
+    # Send WebSocket events
+    # Notify claimer
+    await manager.send_personal_message(
+        {
+            "type": "gift_claimed",
+            "packet_id": packet_id,
+            "amount": claim_amount,
+            "user_id": user_id,
+            "user_name": user_name
+        },
+        user_id
+    )
+    
+    # Notify sender
+    await manager.send_personal_message(
+        {
+            "type": "gift_claimed",
+            "packet_id": packet_id,
+            "amount": claim_amount,
+            "user_id": user_id,
+            "user_name": user_name
+        },
+        packet["sender_id"]
+    )
+    
+    # If completed, send gift_completed event
+    if is_completed:
+        completed_event = {
+            "type": "gift_completed",
+            "packet_id": packet_id
+        }
+        await manager.send_personal_message(completed_event, packet["sender_id"])
+        if not packet["is_group"]:
+            await manager.send_personal_message(completed_event, packet["chat_id"])
+    
+    # Build response
+    updated_packet = await db.gift_packets.find_one({"id": packet_id})
+    
+    return GiftClaimResult(
+        success=True,
+        amount=claim_amount,
+        message=f"You received ${claim_amount:.2f}!",
+        claim=GiftClaimResponse(**claim),
+        packet=GiftPacketResponse(**updated_packet) if updated_packet else None
+    )
+
+@api_router.get("/gifts/{packet_id}")
+async def get_gift_packet(packet_id: str, current_user: dict = Depends(get_current_user)):
+    """Get gift packet details including claims."""
+    packet = await db.gift_packets.find_one({"id": packet_id})
+    if not packet:
+        raise HTTPException(status_code=404, detail="Gift packet not found")
+    
+    # Check expiry
+    packet = await _check_and_expire_packet(packet)
+    
+    # Get claims
+    claims = await db.gift_claims.find({"packet_id": packet_id}).sort("created_at", 1).to_list(100)
+    
+    # Check if current user already claimed
+    user_claim = next((c for c in claims if c["user_id"] == current_user["id"]), None)
+    
+    return {
+        "packet": GiftPacketResponse(**packet),
+        "claims": [GiftClaimResponse(**c) for c in claims],
+        "user_claimed": user_claim is not None,
+        "user_claim": GiftClaimResponse(**user_claim) if user_claim else None,
+        "is_sender": packet["sender_id"] == current_user["id"]
+    }
+
+@api_router.get("/gifts/{packet_id}/claims")
+async def get_gift_claims(packet_id: str, current_user: dict = Depends(get_current_user)):
+    """Get list of claims for a gift packet."""
+    packet = await db.gift_packets.find_one({"id": packet_id})
+    if not packet:
+        raise HTTPException(status_code=404, detail="Gift packet not found")
+    
+    claims = await db.gift_claims.find({"packet_id": packet_id}).sort("created_at", 1).to_list(100)
+    return [GiftClaimResponse(**c) for c in claims]
 
 # ============== TRANSLATION ROUTE ==============
 
