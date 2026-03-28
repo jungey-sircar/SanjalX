@@ -730,6 +730,7 @@ async def register_push_token(token: dict, current_user: dict = Depends(get_curr
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        self.call_rooms: Dict[str, Dict] = {}  # room_id -> {participants: [], call_type: str, creator_id: str}
     
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
@@ -739,6 +740,12 @@ class ConnectionManager:
     def disconnect(self, user_id: str):
         if user_id in self.active_connections:
             del self.active_connections[user_id]
+        # Remove user from any call rooms
+        for room_id, room in list(self.call_rooms.items()):
+            if user_id in room["participants"]:
+                room["participants"].remove(user_id)
+                if len(room["participants"]) == 0:
+                    del self.call_rooms[room_id]
         asyncio.create_task(db.users.update_one({"id": user_id}, {"$set": {"is_online": False}}))
     
     async def send_personal_message(self, message: dict, user_id: str):
@@ -751,6 +758,46 @@ class ConnectionManager:
     async def broadcast_to_users(self, message: dict, user_ids: List[str]):
         for user_id in user_ids:
             await self.send_personal_message(message, user_id)
+    
+    def create_call_room(self, room_id: str, creator_id: str, call_type: str, participant_ids: List[str] = None):
+        """Create a new call room"""
+        self.call_rooms[room_id] = {
+            "participants": [creator_id] + (participant_ids or []),
+            "call_type": call_type,
+            "creator_id": creator_id,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        return self.call_rooms[room_id]
+    
+    def join_call_room(self, room_id: str, user_id: str) -> Optional[Dict]:
+        """Join an existing call room"""
+        if room_id in self.call_rooms:
+            if user_id not in self.call_rooms[room_id]["participants"]:
+                self.call_rooms[room_id]["participants"].append(user_id)
+            return self.call_rooms[room_id]
+        return None
+    
+    def leave_call_room(self, room_id: str, user_id: str) -> Optional[Dict]:
+        """Leave a call room"""
+        if room_id in self.call_rooms:
+            if user_id in self.call_rooms[room_id]["participants"]:
+                self.call_rooms[room_id]["participants"].remove(user_id)
+            # Delete room if empty
+            if len(self.call_rooms[room_id]["participants"]) == 0:
+                del self.call_rooms[room_id]
+                return None
+            return self.call_rooms[room_id]
+        return None
+    
+    def get_call_room(self, room_id: str) -> Optional[Dict]:
+        """Get call room info"""
+        return self.call_rooms.get(room_id)
+    
+    def get_room_participants(self, room_id: str) -> List[str]:
+        """Get list of participants in a room"""
+        if room_id in self.call_rooms:
+            return self.call_rooms[room_id]["participants"]
+        return []
 
 manager = ConnectionManager()
 
@@ -774,8 +821,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
     try:
         while True:
             data = await websocket.receive_json()
+            msg_type = data.get("type")
             
-            if data.get("type") == "message":
+            if msg_type == "message":
                 # Handle chat message
                 msg_data = data.get("data", {})
                 msg_id = str(uuid.uuid4())
@@ -812,7 +860,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
                     user_id
                 )
             
-            elif data.get("type") == "typing":
+            elif msg_type == "typing":
                 # Handle typing indicator
                 receiver_id = data.get("receiver_id")
                 if receiver_id:
@@ -821,39 +869,254 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, token: str = No
                         receiver_id
                     )
             
-            elif data.get("type") == "call_signal":
-                # Handle WebRTC signaling
+            # ============== WebRTC Signaling ==============
+            
+            elif msg_type == "call_request":
+                # 1:1 call request - create a room and notify target
+                target_id = data.get("target_id")
+                call_type = data.get("call_type", "voice")
+                room_id = data.get("room_id") or str(uuid.uuid4())
+                
+                if target_id:
+                    # Create call room
+                    manager.create_call_room(room_id, user_id, call_type, [])
+                    
+                    caller = await db.users.find_one({"id": user_id})
+                    await manager.send_personal_message(
+                        {
+                            "type": "incoming_call",
+                            "room_id": room_id,
+                            "from_id": user_id,
+                            "caller_name": caller.get("display_name", caller.get("username")),
+                            "caller_photo": caller.get("profile_photo"),
+                            "call_type": call_type,
+                            "is_group_call": False
+                        },
+                        target_id
+                    )
+                    
+                    # Confirm room creation to caller
+                    await manager.send_personal_message(
+                        {
+                            "type": "call_room_created",
+                            "room_id": room_id,
+                            "call_type": call_type
+                        },
+                        user_id
+                    )
+            
+            elif msg_type == "group_call_request":
+                # Group call request - create room and notify all participants
+                participant_ids = data.get("participant_ids", [])
+                call_type = data.get("call_type", "video")
+                room_id = data.get("room_id") or str(uuid.uuid4())
+                group_name = data.get("group_name", "Group Call")
+                
+                if participant_ids:
+                    # Create call room with all participants
+                    manager.create_call_room(room_id, user_id, call_type, [])
+                    
+                    caller = await db.users.find_one({"id": user_id})
+                    
+                    # Notify all participants
+                    for participant_id in participant_ids:
+                        if participant_id != user_id:
+                            await manager.send_personal_message(
+                                {
+                                    "type": "incoming_call",
+                                    "room_id": room_id,
+                                    "from_id": user_id,
+                                    "caller_name": caller.get("display_name", caller.get("username")),
+                                    "caller_photo": caller.get("profile_photo"),
+                                    "call_type": call_type,
+                                    "is_group_call": True,
+                                    "group_name": group_name,
+                                    "participant_ids": participant_ids
+                                },
+                                participant_id
+                            )
+                    
+                    # Confirm to caller
+                    await manager.send_personal_message(
+                        {
+                            "type": "call_room_created",
+                            "room_id": room_id,
+                            "call_type": call_type,
+                            "is_group_call": True,
+                            "participant_ids": participant_ids
+                        },
+                        user_id
+                    )
+            
+            elif msg_type == "join_call":
+                # User wants to join a call room
+                room_id = data.get("room_id")
+                if room_id:
+                    room = manager.join_call_room(room_id, user_id)
+                    if room:
+                        # Get user info
+                        joiner = await db.users.find_one({"id": user_id})
+                        
+                        # Notify existing participants that someone joined
+                        other_participants = [p for p in room["participants"] if p != user_id]
+                        for participant_id in other_participants:
+                            await manager.send_personal_message(
+                                {
+                                    "type": "participant_joined",
+                                    "room_id": room_id,
+                                    "user_id": user_id,
+                                    "user_name": joiner.get("display_name", joiner.get("username")),
+                                    "user_photo": joiner.get("profile_photo"),
+                                    "participants": room["participants"]
+                                },
+                                participant_id
+                            )
+                        
+                        # Send room info to joiner (including existing participants)
+                        participants_info = []
+                        for p_id in other_participants:
+                            p_user = await db.users.find_one({"id": p_id})
+                            if p_user:
+                                participants_info.append({
+                                    "id": p_id,
+                                    "name": p_user.get("display_name", p_user.get("username")),
+                                    "photo": p_user.get("profile_photo")
+                                })
+                        
+                        await manager.send_personal_message(
+                            {
+                                "type": "joined_call",
+                                "room_id": room_id,
+                                "call_type": room["call_type"],
+                                "participants": participants_info
+                            },
+                            user_id
+                        )
+            
+            elif msg_type == "leave_call":
+                # User leaves a call
+                room_id = data.get("room_id")
+                if room_id:
+                    room = manager.leave_call_room(room_id, user_id)
+                    
+                    # Notify remaining participants
+                    if room:
+                        for participant_id in room["participants"]:
+                            await manager.send_personal_message(
+                                {
+                                    "type": "participant_left",
+                                    "room_id": room_id,
+                                    "user_id": user_id,
+                                    "participants": room["participants"]
+                                },
+                                participant_id
+                            )
+                    
+                    # Confirm to leaver
+                    await manager.send_personal_message(
+                        {"type": "left_call", "room_id": room_id},
+                        user_id
+                    )
+            
+            elif msg_type == "call_response":
+                # Accept/reject call
+                room_id = data.get("room_id")
+                target_id = data.get("target_id")
+                accepted = data.get("accepted", False)
+                
+                if room_id and target_id:
+                    if accepted:
+                        # Join the room
+                        manager.join_call_room(room_id, user_id)
+                    
+                    await manager.send_personal_message(
+                        {
+                            "type": "call_response",
+                            "room_id": room_id,
+                            "from_id": user_id,
+                            "accepted": accepted
+                        },
+                        target_id
+                    )
+            
+            elif msg_type == "webrtc_offer":
+                # WebRTC offer - relay to target peer
+                target_id = data.get("target_id")
+                room_id = data.get("room_id")
+                offer = data.get("offer")
+                
+                if target_id and offer:
+                    await manager.send_personal_message(
+                        {
+                            "type": "webrtc_offer",
+                            "room_id": room_id,
+                            "from_id": user_id,
+                            "offer": offer
+                        },
+                        target_id
+                    )
+            
+            elif msg_type == "webrtc_answer":
+                # WebRTC answer - relay to target peer
+                target_id = data.get("target_id")
+                room_id = data.get("room_id")
+                answer = data.get("answer")
+                
+                if target_id and answer:
+                    await manager.send_personal_message(
+                        {
+                            "type": "webrtc_answer",
+                            "room_id": room_id,
+                            "from_id": user_id,
+                            "answer": answer
+                        },
+                        target_id
+                    )
+            
+            elif msg_type == "ice_candidate":
+                # ICE candidate - relay to target peer
+                target_id = data.get("target_id")
+                room_id = data.get("room_id")
+                candidate = data.get("candidate")
+                
+                if target_id and candidate:
+                    await manager.send_personal_message(
+                        {
+                            "type": "ice_candidate",
+                            "room_id": room_id,
+                            "from_id": user_id,
+                            "candidate": candidate
+                        },
+                        target_id
+                    )
+            
+            elif msg_type == "end_call":
+                # End call - notify all participants and close room
+                room_id = data.get("room_id")
+                if room_id:
+                    room = manager.get_call_room(room_id)
+                    if room:
+                        # Notify all participants
+                        for participant_id in room["participants"]:
+                            await manager.send_personal_message(
+                                {
+                                    "type": "call_ended",
+                                    "room_id": room_id,
+                                    "ended_by": user_id
+                                },
+                                participant_id
+                            )
+                        # Remove room
+                        if room_id in manager.call_rooms:
+                            del manager.call_rooms[room_id]
+            
+            elif msg_type == "call_signal":
+                # Legacy call signal (for backward compatibility)
                 target_id = data.get("target_id")
                 signal_data = data.get("signal")
                 if target_id:
                     await manager.send_personal_message(
                         {"type": "call_signal", "from_id": user_id, "signal": signal_data},
-                        target_id
-                    )
-            
-            elif data.get("type") == "call_request":
-                # Handle call request
-                target_id = data.get("target_id")
-                call_type = data.get("call_type", "voice")
-                if target_id:
-                    caller = await db.users.find_one({"id": user_id})
-                    await manager.send_personal_message(
-                        {
-                            "type": "incoming_call",
-                            "from_id": user_id,
-                            "caller_name": caller.get("display_name", caller.get("username")),
-                            "call_type": call_type
-                        },
-                        target_id
-                    )
-            
-            elif data.get("type") == "call_response":
-                # Handle call accept/reject
-                target_id = data.get("target_id")
-                accepted = data.get("accepted", False)
-                if target_id:
-                    await manager.send_personal_message(
-                        {"type": "call_response", "from_id": user_id, "accepted": accepted},
                         target_id
                     )
     
