@@ -127,9 +127,14 @@ export default function ChatsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Chats</Text>
-        <TouchableOpacity>
-          <Ionicons name="add-circle-outline" size={28} color={theme.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => router.push('/new-group')}
+          >
+            <Ionicons name="people" size={24} color={theme.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={[styles.searchContainer, { backgroundColor: theme.surface }]}>
