@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,9 @@ import {
   ScrollView,
   Alert,
   Switch,
+  RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,6 +23,28 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const { user, logout, updateUser } = useAuthStore();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshProfile = async () => {
+    try {
+      const response = await api.get('/auth/me');
+      updateUser(response.data);
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshProfile();
+    }, [])
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await refreshProfile();
+    setRefreshing(false);
+  };
 
   const handleEditPhoto = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -69,13 +92,14 @@ export default function ProfileScreen() {
     );
   };
 
-  const MenuItem = ({ icon, label, value, onPress, showArrow = true, rightComponent }: {
+  const MenuItem = ({ icon, label, value, onPress, showArrow = true, rightComponent, iconColor }: {
     icon: string;
     label: string;
     value?: string;
     onPress?: () => void;
     showArrow?: boolean;
     rightComponent?: React.ReactNode;
+    iconColor?: string;
   }) => (
     <TouchableOpacity
       style={[styles.menuItem, { backgroundColor: theme.surface }]}
@@ -83,7 +107,7 @@ export default function ProfileScreen() {
       disabled={!onPress}
     >
       <View style={[styles.menuIcon, { backgroundColor: theme.background }]}>
-        <Ionicons name={icon as any} size={20} color={theme.primary} />
+        <Ionicons name={icon as any} size={20} color={iconColor || theme.primary} />
       </View>
       <View style={styles.menuContent}>
         <Text style={[styles.menuLabel, { color: theme.text }]}>{label}</Text>
@@ -99,12 +123,24 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+        }
+      >
         <View style={styles.header}>
           <Text style={[styles.headerTitle, { color: theme.text }]}>Profile</Text>
+          <TouchableOpacity onPress={() => router.push('/settings')}>
+            <Ionicons name="settings-outline" size={24} color={theme.text} />
+          </TouchableOpacity>
         </View>
 
-        <View style={[styles.profileCard, { backgroundColor: theme.surface }]}>
+        <TouchableOpacity 
+          style={[styles.profileCard, { backgroundColor: theme.surface }]}
+          onPress={() => router.push('/edit-profile')}
+          activeOpacity={0.7}
+        >
           <TouchableOpacity onPress={handleEditPhoto} style={styles.avatarContainer}>
             <Avatar
               source={user?.profile_photo}
@@ -115,27 +151,36 @@ export default function ProfileScreen() {
               <Ionicons name="camera" size={14} color="#FFFFFF" />
             </View>
           </TouchableOpacity>
-          <Text style={[styles.displayName, { color: theme.text }]}>
-            {user?.display_name}
-          </Text>
-          <Text style={[styles.username, { color: theme.textSecondary }]}>
-            @{user?.username}
-          </Text>
-          <Text style={[styles.statusMessage, { color: theme.textSecondary }]}>
-            {user?.status_message}
-          </Text>
-        </View>
+          <View style={styles.profileInfo}>
+            <Text style={[styles.displayName, { color: theme.text }]}>
+              {user?.display_name}
+            </Text>
+            <Text style={[styles.username, { color: theme.textSecondary }]}>
+              @{user?.username}
+            </Text>
+            <Text style={[styles.statusMessage, { color: theme.textSecondary }]} numberOfLines={2}>
+              {user?.status_message}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={24} color={theme.textSecondary} />
+        </TouchableOpacity>
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Account</Text>
-          <MenuItem icon="person-outline" label="Display Name" value={user?.display_name} />
-          <MenuItem icon="at" label="Username" value={user?.username} />
-          <MenuItem icon="mail-outline" label="Email" value={user?.email} />
-          <MenuItem icon="text-outline" label="Status" value={user?.status_message} />
+          <MenuItem 
+            icon="person-outline" 
+            label="Edit Profile" 
+            onPress={() => router.push('/edit-profile')} 
+          />
+          <MenuItem icon="mail-outline" label="Email" value={user?.email} showArrow={false} />
+          {user?.phone_number && (
+            <MenuItem icon="call-outline" label="Phone" value={user.phone_number} showArrow={false} />
+          )}
+          <MenuItem icon="qr-code" label="My QR Code" onPress={() => {}} />
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Settings</Text>
+          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Preferences</Text>
           <MenuItem
             icon="notifications-outline"
             label="Notifications"
@@ -148,15 +193,22 @@ export default function ProfileScreen() {
               />
             }
           />
-          <MenuItem icon="shield-outline" label="Privacy" />
-          <MenuItem icon="moon-outline" label="Appearance" value="System" />
-          <MenuItem icon="language-outline" label="Language" value="English" />
+          <MenuItem icon="moon-outline" label="Appearance" value="System" onPress={() => {}} />
+          <MenuItem icon="language-outline" label="Language" value="English" onPress={() => {}} />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Social</Text>
+          <MenuItem icon="people-outline" label="Invite Friends" onPress={() => {}} />
+          <MenuItem icon="add-circle-outline" label="New Group" onPress={() => router.push('/new-group')} />
         </View>
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Support</Text>
-          <MenuItem icon="help-circle-outline" label="Help Center" />
-          <MenuItem icon="information-circle-outline" label="About" />
+          <MenuItem icon="help-circle-outline" label="Help Center" onPress={() => {}} />
+          <MenuItem icon="chatbubble-outline" label="Contact Us" onPress={() => {}} />
+          <MenuItem icon="star-outline" label="Rate the App" onPress={() => {}} />
+          <MenuItem icon="information-circle-outline" label="About" onPress={() => {}} />
         </View>
 
         <TouchableOpacity
@@ -183,6 +235,9 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
@@ -191,10 +246,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   profileCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: 16,
     borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
+    padding: 16,
     marginBottom: 24,
   },
   avatarContainer: {
@@ -210,19 +266,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  profileInfo: {
+    flex: 1,
+    marginLeft: 16,
+  },
   displayName: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
-    marginTop: 12,
   },
   username: {
     fontSize: 14,
-    marginTop: 4,
+    marginTop: 2,
   },
   statusMessage: {
-    fontSize: 14,
-    marginTop: 8,
-    textAlign: 'center',
+    fontSize: 13,
+    marginTop: 6,
+    lineHeight: 18,
   },
   section: {
     marginBottom: 24,
