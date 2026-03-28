@@ -38,11 +38,18 @@ ConnectX is a comprehensive mobile messaging and communication app similar to We
 - SectionList UI with "On ConnectX" and "Invite to ConnectX" sections
 - Local contact caching for offline support
 
-### 5. Voice & Video Calls
-- Voice calls with mute/speaker controls
-- Video calls with camera toggle
-- Call history tracking
-- WebRTC signaling via backend
+### 5. Voice & Video Calls (WebRTC)
+- **Full WebRTC implementation** for 1-to-1 voice and video calls
+- WebSocket-based signaling (SDP offer/answer, ICE candidates)
+- Shared WebSocket connection with chat (no dual-connection conflicts)
+- Local media capture with fallback handling
+- Remote video stream rendering (WebVideoView component)
+- Call controls: mute, camera toggle, flip camera, speaker
+- Incoming call overlay notification (IncomingCallOverlay)
+- Call history tracked in MongoDB
+- Call status lifecycle: pending → accepted → connected → ended/rejected
+- Graceful handling when camera/mic not available
+- Web-compatible using browser WebRTC APIs
 
 ### 6. Wallet & Payments (MOCK)
 - **MOCK wallet system** with $1000 initial balance
