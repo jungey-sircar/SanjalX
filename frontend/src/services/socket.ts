@@ -1,5 +1,4 @@
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { getWebSocketUrl } from './config';
 
 type MessageHandler = (data: any) => void;
 
@@ -41,15 +40,7 @@ class SocketService {
     this.isConnecting = true;
     this.isManualDisconnect = false;
 
-    const API_URL = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL || '';
-    
-    let wsUrl: string;
-    if (Platform.OS === 'web') {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${protocol}//${window.location.host}/api/ws/${userId}?token=${token}`;
-    } else {
-      wsUrl = `${API_URL.replace('https://', 'wss://').replace('http://', 'ws://')}/api/ws/${userId}?token=${token}`;
-    }
+    const wsUrl = getWebSocketUrl(`/api/ws/${userId}?token=${token}`);
 
     console.log('[Socket] Connecting to:', wsUrl.substring(0, 60) + '...');
     

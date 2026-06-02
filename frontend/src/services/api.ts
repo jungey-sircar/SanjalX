@@ -1,20 +1,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { getBackendUrl } from './config';
 
-// Get API URL from environment
-const getApiUrl = () => {
-  // For web, use relative URL to leverage proxy
-  if (Platform.OS === 'web') {
-    return '';
-  }
-  // For mobile, use the backend URL
-  const envUrl = Constants.expoConfig?.extra?.backendUrl || process.env.EXPO_PUBLIC_BACKEND_URL;
-  return envUrl || '';
-};
-
-const API_URL = getApiUrl();
+const API_URL = getBackendUrl();
 console.log('API_URL configured:', API_URL);
 
 const api = axios.create({

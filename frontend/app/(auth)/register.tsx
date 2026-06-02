@@ -58,7 +58,13 @@ export default function RegisterScreen() {
       );
       router.replace('/(tabs)/chats');
     } catch (error: any) {
-      Alert.alert('Registration Failed', error.response?.data?.detail || 'Please try again');
+      const detail = error.response?.data?.detail;
+      const message = detail || (
+        error.message === 'Network Error'
+          ? 'Cannot reach the backend API. Make sure the backend is running and EXPO_PUBLIC_BACKEND_URL points to it.'
+          : error.message || 'Please try again'
+      );
+      Alert.alert('Registration Failed', message);
     } finally {
       setLoading(false);
     }
