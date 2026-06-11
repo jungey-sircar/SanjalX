@@ -8,130 +8,28 @@ import {
   TextInput,
   RefreshControl,
   Alert,
-  Modal,
   SectionList,
   Platform,
-  Linking,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as Contacts from 'expo-contacts';
-import * as SMS from 'expo-sms';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/hooks/useTheme';
 import { Avatar } from '../../src/components/Avatar';
 import api from '../../src/services/api';
-import { User, DeviceContact, MatchedContact } from '../../src/types';
-
-interface ContactSection {
-  title: string;
-  data: MatchedContact[];
-}
+import { User } from '../../src/types';
 
 export default function ContactsScreen() {
   const router = useRouter();
   const theme = useTheme();
   const [appContacts, setAppContacts] = useState<User[]>([]);
-  const [deviceContacts, setDeviceContacts] = useState<DeviceContact[]>([]);
-  const [matchedContacts, setMatchedContacts] = useState<MatchedContact[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [hasContactPermission, setHasContactPermission] = useState<boolean | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [searchResults, setSearchResults] = useState<User[]>([]);
-  const [addSearchQuery, setAddSearchQuery] = useState('');
-
-  const requestContactPermission = async () => {
-    const { status } = await Contacts.requestPermissionsAsync();
-    setHasContactPermission(status === 'granted');
-    return status === 'granted';
-  };
-
-  const loadDeviceContacts = async () => {
-    if (Platform.OS === 'web') {
-      // Web doesn't support contacts
-      return [];
-    }
-
-    const hasPermission = await requestContactPermission();
-    if (!hasPermission) {
-      return [];
-    }
-
-    const { data } = await Contacts.getContactsAsync({
-      fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name, Contacts.Fields.Image],
-    });
-
-    const contacts: DeviceContact[] = data
-      .filter(contact => contact.phoneNumbers && contact.phoneNumbers.length > 0)
-      .map(contact => ({
-        id: contact.id || String(Math.random()),
-        name: contact.name || 'Unknown',
-        phoneNumbers: contact.phoneNumbers?.map(p => p.number || '').filter(p => p) || [],
-        image: contact.image?.uri,
-      }));
-
-    // Cache contacts locally
-    await AsyncStorage.setItem('deviceContacts', JSON.stringify(contacts));
-    
-    return contacts;
-  };
-
-  const matchContactsWithServer = async (contacts: DeviceContact[]) => {
-    if (contacts.length === 0) return [];
-
-    // Get all phone numbers
-    const allPhoneNumbers = contacts.flatMap(c => c.phoneNumbers);
-    
-    try {
-      const response = await api.post('/contacts/match-phones', {
-        phone_numbers: allPhoneNumbers,
-      });
-
-      // Map results back to device contacts
-      const matchResults: MatchedContact[] = [];
-      const phoneToMatch = new Map(response.data.map((r: any) => [r.phone_number, r]));
-
-      for (const contact of contacts) {
-        let matched = false;
-        for (const phone of contact.phoneNumbers) {
-          const match = phoneToMatch.get(phone);
-          if (match && match.is_registered) {
-            matchResults.push({
-              phone_number: phone,
-              is_registered: true,
-              user: match.user,
-              deviceContact: contact,
-            });
-            matched = true;
-            break;
-          }
-        }
-        if (!matched && contact.phoneNumbers.length > 0) {
-          matchResults.push({
-            phone_number: contact.phoneNumbers[0],
-            is_registered: false,
-            user: null,
-            deviceContact: contact,
-          });
-        }
-      }
-
-      return matchResults;
-    } catch (error) {
-      console.error('Error matching contacts:', error);
-      // Return all as unregistered on error
-      return contacts.map(c => ({
-        phone_number: c.phoneNumbers[0] || '',
-        is_registered: false,
-        user: null,
-        deviceContact: c,
-      }));
-    }
-  };
+  const [searching, setSearching] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const loadAppContacts = async () => {
     try {
@@ -142,266 +40,270 @@ export default function ContactsScreen() {
     }
   };
 
-  const loadAllContacts = async () => {
+  const loadData = async () => {
     setLoading(true);
-    try {
-      // Load app contacts and device contacts in parallel
-      const [_, deviceContactsData] = await Promise.all([
-        loadAppContacts(),
-        loadDeviceContacts(),
-      ]);
-
-      setDeviceContacts(deviceContactsData);
-
-      // Match device contacts with server
-      const matched = await matchContactsWithServer(deviceContactsData);
-      setMatchedContacts(matched);
-    } catch (error) {
-      console.error('Error loading contacts:', error);
-    } finally {
-      setLoading(false);
-    }
+    await loadAppContacts();
+    setLoading(false);
   };
 
   useFocusEffect(
     useCallback(() => {
-      loadAllContacts();
+      loadData();
     }, [])
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadAllContacts();
+    await loadAppContacts();
     setRefreshing(false);
   };
 
+  // Search users on the platform
   const searchUsers = async (query: string) => {
     if (query.length < 2) {
       setSearchResults([]);
       return;
     }
+    setSearching(true);
     try {
-      const response = await api.get(`/users/search?query=${query}`);
-      const results = response.data.filter(
-        (user: User) => !appContacts.find(c => c.id === user.id)
-      );
-      setSearchResults(results);
+      const response = await api.get(`/users/search?query=${encodeURIComponent(query)}`);
+      // Filter out users already in contacts
+      const contactIds = new Set(appContacts.map(c => c.id));
+      const filtered = response.data.filter((u: User) => !contactIds.has(u.id));
+      setSearchResults(filtered);
     } catch (error) {
       console.error('Error searching users:', error);
+    } finally {
+      setSearching(false);
     }
   };
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery.length >= 2) {
+        searchUsers(searchQuery);
+      } else {
+        setSearchResults([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, appContacts]);
 
   const addContact = async (userId: string) => {
     try {
       await api.post('/contacts/add', { user_id: userId });
       await loadAppContacts();
-      setShowAddModal(false);
-      setAddSearchQuery('');
-      setSearchResults([]);
-      Alert.alert('Success', 'Contact added!');
+      setSearchResults(prev => prev.filter(u => u.id !== userId));
+      Alert.alert('Contact Added', 'You can now chat with this person!');
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.detail || 'Failed to add contact');
-    }
-  };
-
-  const inviteContact = async (contact: MatchedContact) => {
-    const isAvailable = await SMS.isAvailableAsync();
-    if (isAvailable) {
-      const { result } = await SMS.sendSMSAsync(
-        [contact.phone_number],
-        `Hey! Join me on ConnectX - the best messaging app! Download now: https://connectx.app/download`
-      );
-      if (result === 'sent') {
-        Alert.alert('Invite Sent', `Invitation sent to ${contact.deviceContact?.name}`);
+      const msg = error.response?.data?.detail;
+      if (msg === 'Already in contacts') {
+        Alert.alert('Already Added', 'This person is already in your contacts.');
+      } else {
+        Alert.alert('Error', msg || 'Failed to add contact');
       }
-    } else {
-      // Fallback to sharing
-      Alert.alert(
-        'Invite',
-        `SMS not available. Share this link with ${contact.deviceContact?.name}: https://connectx.app/download`
-      );
     }
   };
 
-  const handleContactPress = (contact: MatchedContact) => {
-    if (contact.is_registered && contact.user) {
-      router.push(`/chat/${contact.user.id}`);
-    } else {
-      Alert.alert(
-        'Invite to ConnectX',
-        `${contact.deviceContact?.name} is not on ConnectX yet. Would you like to invite them?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Invite', onPress: () => inviteContact(contact) },
-        ]
-      );
+  const addAndChat = async (userId: string) => {
+    try {
+      await api.post('/contacts/add', { user_id: userId });
+      await loadAppContacts();
+    } catch {
+      // May already be a contact
     }
+    router.push(`/chat/${userId}`);
   };
 
-  // Get sections for the list
-  const getSections = (): ContactSection[] => {
-    const sections: ContactSection[] = [];
+  // Filter contacts based on search
+  const filteredContacts = appContacts.filter(contact => {
+    if (!searchQuery) return true;
+    const name = (contact.display_name || contact.username || '').toLowerCase();
+    const phone = (contact.phone_number || '').toLowerCase();
+    const email = (contact.email || '').toLowerCase();
+    const q = searchQuery.toLowerCase();
+    return name.includes(q) || phone.includes(q) || email.includes(q);
+  });
 
-    // App contacts (contacts added within the app)
-    const filteredAppContacts = appContacts.filter(contact => {
-      const name = contact.display_name || contact.username || '';
-      return name.toLowerCase().includes(searchQuery.toLowerCase());
-    });
+  // Build sections
+  const getSections = () => {
+    const sections: { title: string; data: any[]; type: string }[] = [];
 
-    if (filteredAppContacts.length > 0) {
+    // My contacts section
+    if (filteredContacts.length > 0 && !isSearchFocused) {
       sections.push({
-        title: 'ConnectX Contacts',
-        data: filteredAppContacts.map(u => ({
-          phone_number: u.phone_number || '',
-          is_registered: true,
-          user: u,
-        })),
+        title: `My Contacts (${filteredContacts.length})`,
+        data: filteredContacts,
+        type: 'contact',
       });
+    } else if (filteredContacts.length > 0 && searchQuery.length >= 2) {
+      // Show matching contacts even when search focused
+      const matching = filteredContacts.filter(c => {
+        const q = searchQuery.toLowerCase();
+        return (c.display_name || '').toLowerCase().includes(q) ||
+               (c.username || '').toLowerCase().includes(q);
+      });
+      if (matching.length > 0) {
+        sections.push({
+          title: 'In Your Contacts',
+          data: matching,
+          type: 'contact',
+        });
+      }
     }
 
-    // Device-matched contacts (only on native)
-    if (Platform.OS !== 'web') {
-      const filtered = matchedContacts.filter(contact => {
-        const name = contact.deviceContact?.name || contact.user?.display_name || '';
-        return name.toLowerCase().includes(searchQuery.toLowerCase());
+    // Search results from platform
+    if (searchQuery.length >= 2 && searchResults.length > 0) {
+      sections.push({
+        title: 'People on ConnectX',
+        data: searchResults,
+        type: 'search_result',
       });
-
-      // Filter out contacts already in appContacts to avoid duplicates
-      const appContactIds = new Set(appContacts.map(c => c.id));
-      const registered = filtered.filter(c => c.is_registered && c.user && !appContactIds.has(c.user.id));
-      const notRegistered = filtered.filter(c => !c.is_registered);
-
-      if (registered.length > 0) {
-        sections.push({
-          title: 'Also on ConnectX',
-          data: registered,
-        });
-      }
-      
-      if (notRegistered.length > 0) {
-        sections.push({
-          title: 'Invite to ConnectX',
-          data: notRegistered,
-        });
-      }
     }
 
     return sections;
   };
 
-  const renderContact = ({ item }: { item: MatchedContact }) => (
+  const renderContactItem = (item: User) => (
     <TouchableOpacity
       style={[styles.contactItem, { backgroundColor: theme.surface }]}
-      onPress={() => handleContactPress(item)}
-    >
-      <Avatar
-        source={item.user?.profile_photo || undefined}
-        name={item.deviceContact?.name || item.user?.display_name || ''}
-        size={50}
-        isOnline={item.user?.is_online}
-      />
-      <View style={styles.contactContent}>
-        <Text style={[styles.userName, { color: theme.text }]}>
-          {item.deviceContact?.name || item.user?.display_name}
-        </Text>
-        {item.is_registered ? (
-          <View style={styles.statusRow}>
-            <Ionicons name="checkmark-circle" size={14} color={theme.success} />
-            <Text style={[styles.statusText, { color: theme.success }]}>
-              Available on ConnectX
-            </Text>
-          </View>
-        ) : (
-          <Text style={[styles.phoneNumber, { color: theme.textSecondary }]}>
-            {item.phone_number}
-          </Text>
-        )}
-      </View>
-      <View style={styles.actions}>
-        {item.is_registered ? (
-          <>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push(`/chat/${item.user!.id}`)}
-            >
-              <Ionicons name="chatbubble" size={20} color={theme.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push(`/call/${item.user!.id}?type=voice`)}
-            >
-              <Ionicons name="call" size={20} color={theme.primary} />
-            </TouchableOpacity>
-          </>
-        ) : (
-          <TouchableOpacity
-            style={[styles.inviteButton, { backgroundColor: theme.primary }]}
-            onPress={() => inviteContact(item)}
-          >
-            <Text style={styles.inviteButtonText}>Invite</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderSectionHeader = ({ section }: { section: ContactSection }) => (
-    <View style={[styles.sectionHeader, { backgroundColor: theme.background }]}>
-      <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
-        {section.title} ({section.data.length})
-      </Text>
-    </View>
-  );
-
-  const renderSearchResult = ({ item }: { item: User }) => (
-    <TouchableOpacity
-      style={[styles.contactItem, { backgroundColor: theme.surface }]}
-      onPress={() => addContact(item.id)}
+      onPress={() => router.push(`/chat/${item.id}`)}
+      activeOpacity={0.7}
     >
       <Avatar
         source={item.profile_photo}
-        name={item.display_name}
+        name={item.display_name || item.username}
         size={50}
+        isOnline={item.is_online}
       />
       <View style={styles.contactContent}>
-        <Text style={[styles.userName, { color: theme.text }]}>
-          {item.display_name}
+        <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
+          {item.display_name || item.username}
         </Text>
-        <Text style={[styles.statusMessage, { color: theme.textSecondary }]}>
+        <Text style={[styles.contactSub, { color: theme.textSecondary }]} numberOfLines={1}>
           @{item.username}
+          {item.phone_number ? ` · ${item.phone_number}` : ''}
         </Text>
       </View>
-      <TouchableOpacity
-        style={[styles.addButton, { backgroundColor: theme.primary }]}
-        onPress={() => addContact(item.id)}
-      >
-        <Ionicons name="add" size={20} color="#FFFFFF" />
-      </TouchableOpacity>
+      <View style={styles.contactActions}>
+        <TouchableOpacity
+          style={[styles.iconBtn, { backgroundColor: theme.primary + '15' }]}
+          onPress={() => router.push(`/chat/${item.id}`)}
+        >
+          <Ionicons name="chatbubble" size={18} color={theme.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.iconBtn, { backgroundColor: theme.primary + '15' }]}
+          onPress={() => router.push(`/call/${item.id}?type=voice`)}
+        >
+          <Ionicons name="call" size={18} color={theme.primary} />
+        </TouchableOpacity>
+      </View>
     </TouchableOpacity>
   );
 
-  const renderPermissionRequest = () => (
-    <View style={styles.permissionContainer}>
-      <Ionicons name="people-outline" size={64} color={theme.textSecondary} />
-      <Text style={[styles.permissionTitle, { color: theme.text }]}>
-        Access Your Contacts
+  const renderSearchResultItem = (item: User) => (
+    <TouchableOpacity
+      style={[styles.contactItem, { backgroundColor: theme.surface }]}
+      onPress={() => addAndChat(item.id)}
+      activeOpacity={0.7}
+    >
+      <Avatar
+        source={item.profile_photo}
+        name={item.display_name || item.username}
+        size={50}
+      />
+      <View style={styles.contactContent}>
+        <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
+          {item.display_name || item.username}
+        </Text>
+        <Text style={[styles.contactSub, { color: theme.textSecondary }]} numberOfLines={1}>
+          @{item.username}
+          {item.phone_number ? ` · ${item.phone_number}` : ''}
+        </Text>
+      </View>
+      <View style={styles.contactActions}>
+        <TouchableOpacity
+          style={[styles.addBtn, { backgroundColor: theme.primary }]}
+          onPress={() => addContact(item.id)}
+        >
+          <Ionicons name="person-add" size={16} color="#FFF" />
+          <Text style={styles.addBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderItem = ({ item, section }: { item: User; section: any }) => {
+    if (section.type === 'search_result') {
+      return renderSearchResultItem(item);
+    }
+    return renderContactItem(item);
+  };
+
+  const renderSectionHeader = ({ section }: any) => (
+    <View style={[styles.sectionHeader, { backgroundColor: theme.background }]}>
+      <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+        {section.title}
       </Text>
-      <Text style={[styles.permissionText, { color: theme.textSecondary }]}>
-        To find friends on ConnectX, we need access to your contacts. Your contacts are processed securely and never shared publicly.
-      </Text>
-      <TouchableOpacity
-        style={[styles.permissionButton, { backgroundColor: theme.primary }]}
-        onPress={async () => {
-          const granted = await requestContactPermission();
-          if (granted) {
-            loadAllContacts();
-          }
-        }}
-      >
-        <Text style={styles.permissionButtonText}>Allow Access</Text>
-      </TouchableOpacity>
     </View>
   );
+
+  const renderEmpty = () => {
+    if (searchQuery.length >= 2 && !searching && searchResults.length === 0 && filteredContacts.length === 0) {
+      return (
+        <View style={styles.emptySearch}>
+          <Ionicons name="search" size={48} color={theme.textSecondary} />
+          <Text style={[styles.emptyTitle, { color: theme.textSecondary }]}>
+            No users found for "{searchQuery}"
+          </Text>
+          <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+            Try searching by username, email, or phone number
+          </Text>
+        </View>
+      );
+    }
+
+    if (!searchQuery && appContacts.length === 0 && !loading) {
+      return (
+        <View style={styles.emptyContainer}>
+          <View style={[styles.emptyIcon, { backgroundColor: theme.primary + '15' }]}>
+            <Ionicons name="people" size={48} color={theme.primary} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: theme.text }]}>
+            Find People to Chat With
+          </Text>
+          <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+            Search for friends by their username, email, or phone number above
+          </Text>
+          <View style={styles.tipContainer}>
+            <View style={[styles.tipCard, { backgroundColor: theme.surface }]}>
+              <Ionicons name="search" size={20} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.tipTitle, { color: theme.text }]}>Search Users</Text>
+                <Text style={[styles.tipSub, { color: theme.textSecondary }]}>
+                  Type a name, email, or phone in the search bar
+                </Text>
+              </View>
+            </View>
+            <View style={[styles.tipCard, { backgroundColor: theme.surface }]}>
+              <Ionicons name="person-add" size={20} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.tipTitle, { color: theme.text }]}>Add & Chat</Text>
+                <Text style={[styles.tipSub, { color: theme.textSecondary }]}>
+                  Tap on a user to add them and start chatting instantly
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      );
+    }
+    return null;
+  };
+
+  const sections = getSections();
 
   if (loading) {
     return (
@@ -411,9 +313,6 @@ export default function ContactsScreen() {
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={[styles.loadingText, { color: theme.textSecondary }]}>
-            Loading contacts...
-          </Text>
         </View>
       </SafeAreaView>
     );
@@ -421,105 +320,71 @@ export default function ContactsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
+      {/* Header */}
       <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Contacts</Text>
-        <TouchableOpacity onPress={() => setShowAddModal(true)}>
-          <Ionicons name="person-add" size={24} color={theme.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <Text style={[styles.contactCount, { color: theme.textSecondary }]}>
+            {appContacts.length} contacts
+          </Text>
+        </View>
       </View>
 
+      {/* Search bar - always visible and prominent */}
       <View style={[styles.searchContainer, { backgroundColor: theme.surface }]}>
         <Ionicons name="search" size={20} color={theme.textSecondary} />
         <TextInput
           style={[styles.searchInput, { color: theme.text }]}
-          placeholder="Search contacts..."
+          placeholder="Search by name, email, or phone..."
           placeholderTextColor={theme.textSecondary}
           value={searchQuery}
           onChangeText={setSearchQuery}
+          onFocus={() => setIsSearchFocused(true)}
+          onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+          autoCapitalize="none"
+          autoCorrect={false}
         />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+            <Ionicons name="close-circle" size={20} color={theme.textSecondary} />
+          </TouchableOpacity>
+        )}
+        {searching && <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8 }} />}
       </View>
 
-      {Platform.OS !== 'web' && hasContactPermission === false ? (
-        renderPermissionRequest()
-      ) : getSections().length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="people-outline" size={64} color={theme.textSecondary} />
-          <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-            {searchQuery ? 'No contacts found' : 'No contacts yet'}
+      {/* Search hint */}
+      {searchQuery.length > 0 && searchQuery.length < 2 && (
+        <View style={styles.searchHint}>
+          <Text style={[styles.searchHintText, { color: theme.textSecondary }]}>
+            Type at least 2 characters to search users...
           </Text>
-          <TouchableOpacity
-            style={[styles.addContactButton, { backgroundColor: theme.primary }]}
-            onPress={() => setShowAddModal(true)}
-          >
-            <Text style={styles.addContactButtonText}>Add Contacts</Text>
-          </TouchableOpacity>
         </View>
-      ) : (
+      )}
+
+      {/* Content */}
+      {sections.length > 0 ? (
         <SectionList
-          sections={getSections()}
-          renderItem={renderContact}
+          sections={sections}
+          renderItem={renderItem}
           renderSectionHeader={renderSectionHeader}
-          keyExtractor={(item) => item.phone_number + (item.user?.id || '')}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           stickySectionHeadersEnabled={true}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
           }
         />
+      ) : (
+        <FlatList
+          data={[]}
+          renderItem={() => null}
+          ListHeaderComponent={renderEmpty}
+          contentContainerStyle={styles.emptyListContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />
+          }
+        />
       )}
-
-      <Modal
-        visible={showAddModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowAddModal(false)}
-      >
-        <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowAddModal(false)}>
-              <Text style={[styles.cancelText, { color: theme.primary }]}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Add Contact</Text>
-            <View style={{ width: 60 }} />
-          </View>
-
-          <View style={[styles.searchContainer, { backgroundColor: theme.surface }]}>
-            <Ionicons name="search" size={20} color={theme.textSecondary} />
-            <TextInput
-              style={[styles.searchInput, { color: theme.text }]}
-              placeholder="Search by username or email..."
-              placeholderTextColor={theme.textSecondary}
-              value={addSearchQuery}
-              onChangeText={(text) => {
-                setAddSearchQuery(text);
-                searchUsers(text);
-              }}
-              autoFocus
-            />
-          </View>
-
-          {searchResults.length > 0 ? (
-            <FlatList
-              data={searchResults}
-              renderItem={renderSearchResult}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.listContent}
-            />
-          ) : addSearchQuery.length >= 2 ? (
-            <View style={styles.noResultsContainer}>
-              <Text style={[styles.noResultsText, { color: theme.textSecondary }]}>
-                No users found
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.noResultsContainer}>
-              <Text style={[styles.noResultsText, { color: theme.textSecondary }]}>
-                Enter at least 2 characters to search
-              </Text>
-            </View>
-          )}
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -539,22 +404,42 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  contactCount: {
+    fontSize: 13,
+  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 16,
     marginBottom: 8,
     paddingHorizontal: 12,
-    height: 40,
-    borderRadius: 10,
+    height: 44,
+    borderRadius: 12,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
     fontSize: 16,
+    marginLeft: 8,
+    paddingVertical: 8,
+  },
+  searchHint: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+  },
+  searchHintText: {
+    fontSize: 13,
+    fontStyle: 'italic',
   },
   listContent: {
-    paddingBottom: 16,
+    paddingBottom: 100,
+  },
+  emptyListContent: {
+    flexGrow: 1,
   },
   sectionHeader: {
     paddingHorizontal: 16,
@@ -562,86 +447,52 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   contactItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    marginHorizontal: 16,
-    marginVertical: 4,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   contactContent: {
     flex: 1,
     marginLeft: 12,
   },
-  userName: {
+  contactName: {
     fontSize: 16,
     fontWeight: '600',
   },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-    gap: 4,
-  },
-  statusText: {
-    fontSize: 13,
-  },
-  statusMessage: {
+  contactSub: {
     fontSize: 13,
     marginTop: 2,
   },
-  phoneNumber: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  actions: {
+  contactActions: {
     flexDirection: 'row',
     gap: 8,
   },
-  actionButton: {
-    padding: 8,
-  },
-  addButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  iconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  inviteButton: {
-    paddingHorizontal: 16,
+  addBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 16,
+    borderRadius: 20,
   },
-  inviteButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 16,
-    marginBottom: 24,
-  },
-  addContactButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 24,
-  },
-  addContactButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  addBtnText: {
+    color: '#FFF',
+    fontSize: 13,
     fontWeight: '600',
   },
   loadingContainer: {
@@ -649,60 +500,55 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-  },
-  permissionContainer: {
+  emptyContainer: {
     flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 40,
+  },
+  emptyIcon: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
+    marginBottom: 20,
   },
-  permissionTitle: {
+  emptyTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
-    marginTop: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 8,
   },
-  permissionText: {
+  emptySubtext: {
     fontSize: 14,
     textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 24,
     lineHeight: 20,
+    marginBottom: 28,
   },
-  permissionButton: {
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 24,
-  },
-  permissionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalContainer: {
+  emptySearch: {
     flex: 1,
+    alignItems: 'center',
+    paddingTop: 60,
+    gap: 8,
   },
-  modalHeader: {
+  tipContainer: {
+    width: '100%',
+    gap: 12,
+  },
+  tipCard: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     padding: 16,
+    borderRadius: 14,
   },
-  cancelText: {
-    fontSize: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
+  tipTitle: {
+    fontSize: 15,
     fontWeight: '600',
   },
-  noResultsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  noResultsText: {
-    fontSize: 16,
+  tipSub: {
+    fontSize: 13,
+    marginTop: 2,
   },
 });

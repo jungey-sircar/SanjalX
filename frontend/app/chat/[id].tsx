@@ -155,7 +155,13 @@ export default function ChatScreen() {
         is_group: false,
       });
       setShowGiftModal(false);
-      // Gift message will appear via WebSocket
+      // Reload messages to show the gift packet message
+      try {
+        const messagesRes = await api.get(`/messages/${id}`);
+        setMessages(messagesRes.data);
+      } catch (err) {
+        console.error('Error reloading messages:', err);
+      }
     } catch (error: any) {
       throw error; // Let modal handle it
     }

@@ -353,7 +353,8 @@ async def search_users(query: str, current_user: dict = Depends(get_current_user
             {"$or": [
                 {"username": {"$regex": query, "$options": "i"}},
                 {"display_name": {"$regex": query, "$options": "i"}},
-                {"email": {"$regex": query, "$options": "i"}}
+                {"email": {"$regex": query, "$options": "i"}},
+                {"phone_number": {"$regex": query, "$options": "i"}}
             ]}
         ]
     }).to_list(50)
@@ -829,7 +830,7 @@ async def send_gift_packet(gift: GiftPacketCreate, current_user: dict = Depends(
     debit_tx = {
         "id": str(uuid.uuid4()),
         "sender_id": sender_id,
-        "receiver_id": gift.chat_id,
+        "receiver_id": "gift:" + packet_id,
         "amount": gift.total_amount,
         "note": f"Gift packet: {gift.message or 'Sent you a gift!'}",
         "status": "completed",

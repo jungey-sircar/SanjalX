@@ -157,6 +157,54 @@ export default function WalletScreen() {
     const isSent = item.sender_id === currentUserId;
     const otherUser = isSent ? item.receiverUser : item.senderUser;
     
+    // Determine if this is a gift transaction
+    const txType = (item as any).tx_type || '';
+    const isGiftSent = txType === 'gift_sent';
+    const isGiftReceived = txType === 'gift_received';
+    const isRefund = txType === 'refund';
+    
+    let iconName: any = isSent ? 'arrow-up' : 'arrow-down';
+    let iconBg = isSent ? '#FFEBEE' : '#E8F5E9';
+    let iconColor = isSent ? '#E53935' : '#43A047';
+    let label = isSent ? `To ${otherUser?.display_name || 'Unknown'}` : `From ${otherUser?.display_name || 'Unknown'}`;
+    let amountColor = isSent ? '#E53935' : '#43A047';
+    let prefix = isSent ? '-' : '+';
+    
+    if (isGiftSent) {
+      // Gift sent - only the sender sees this (always a debit)
+      iconName = 'gift';
+      iconBg = '#FFF3E0';
+      iconColor = '#E65100';
+      amountColor = '#E53935';
+      prefix = '-';
+      label = `Gift sent`;
+    } else if (isGiftReceived) {
+      // Gift received - determine role based on sender/receiver
+      iconName = 'gift';
+      if (item.receiver_id === currentUserId) {
+        // Current user is the receiver - they got money
+        iconBg = '#FCE4EC';
+        iconColor = '#C41E3A';
+        amountColor = '#43A047';
+        prefix = '+';
+        label = `Gift from ${item.senderUser?.display_name || otherUser?.display_name || 'someone'}`;
+      } else {
+        // Current user is the sender who created the gift - it's their debit
+        iconBg = '#FFF3E0';
+        iconColor = '#E65100';
+        amountColor = '#E53935';
+        prefix = '-';
+        label = `Gift to ${item.receiverUser?.display_name || otherUser?.display_name || 'someone'}`;
+      }
+    } else if (isRefund) {
+      iconName = 'refresh';
+      iconBg = '#E3F2FD';
+      iconColor = '#1565C0';
+      amountColor = '#43A047';
+      prefix = '+';
+      label = 'Gift refund';
+    }
+    
     return (
       <TouchableOpacity 
         style={[styles.transactionItem, { backgroundColor: theme.surface }]}
@@ -167,17 +215,13 @@ export default function WalletScreen() {
       >
         <View style={[
           styles.transactionIcon,
-          { backgroundColor: isSent ? '#FFEBEE' : '#E8F5E9' }
+          { backgroundColor: iconBg }
         ]}>
-          <Ionicons
-            name={isSent ? 'arrow-up' : 'arrow-down'}
-            size={20}
-            color={isSent ? '#E53935' : '#43A047'}
-          />
+          <Ionicons name={iconName} size={20} color={iconColor} />
         </View>
         <View style={styles.transactionContent}>
           <Text style={[styles.transactionUser, { color: theme.text }]}>
-            {isSent ? `To ${otherUser?.display_name || 'Unknown'}` : `From ${otherUser?.display_name || 'Unknown'}`}
+            {label}
           </Text>
           {item.note && (
             <Text style={[styles.transactionNote, { color: theme.textSecondary }]} numberOfLines={1}>
@@ -188,11 +232,8 @@ export default function WalletScreen() {
             {formatDate(item.created_at)}
           </Text>
         </View>
-        <Text style={[
-          styles.transactionAmount,
-          { color: isSent ? '#E53935' : '#43A047' }
-        ]}>
-          {isSent ? '-' : '+'}${item.amount.toFixed(2)}
+        <Text style={[styles.transactionAmount, { color: amountColor }]}>
+          {prefix}${item.amount.toFixed(2)}
         </Text>
       </TouchableOpacity>
     );
@@ -251,9 +292,6 @@ export default function WalletScreen() {
       <View style={[styles.balanceCard, { backgroundColor: theme.primary }]}>
         <View style={styles.balanceHeader}>
           <Text style={styles.balanceLabel}>Available Balance</Text>
-          <View style={[styles.mockBadge, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-            <Text style={styles.mockBadgeText}>MOCK</Text>
-          </View>
         </View>
         <Text style={styles.balanceAmount}>
           ${wallet?.balance.toFixed(2) || '0.00'}
